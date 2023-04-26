@@ -1,0 +1,92 @@
+**Clone the repository and create the following directories:
+
+mkdir -p .github/workflows
+mkdir -p kubernetes
+mkdir -p helm/frontend/templates
+mkdir -p helm/api/templates
+mkdir -p helm/database/templates
+
+**Create a new Service Account JSON key file and encrypt it using gcloud kms encrypt.
+
+gcloud kms encrypt --plaintext-file=sa-key.json --ciphertext-file=sa-key.enc --location=global --keyring=my-key-ring --key=my-key
+
+**Replace my-key-ring and my-key with the name of your keyring and key on Google Cloud Platform.
+
+**Add the encrypted Service Account key to the GitHub repository secrets.
+
+**Create the following files in the .github/workflows directory:
+
+build-push-deploy.yml:
+
+name: Build, Push and Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+      - name: Login to Container Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ${{ secrets.CONTAINER_REGISTRY }}
+          username: _json_key
+          password: ${{ secrets.SA_KEY }}
+      - name: Build and push Docker image
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ secrets.CONTAINER_REGISTRY }}/frontend:${{ github.sha }}
+  deploy-frontend:
+    name: Deploy Frontend to Kubernetes
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set up Kubectl
+        uses: dawidd6/action-setup-kubectl@v1
+        with:
+          kubectl_version: '1.22.0'
+      - name: Install HELM
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+      - name: Add HELM repository
+        run: helm repo add stable https://charts.helm.sh/stable
+      - name: Install frontend Helm chart
+        run: |
+          helm upgrade --install frontend helm/frontend --set image.tag=${{ github.sha }} --set gcr.io=${{ secrets.CONTAINER_REGISTRY }}
+
+
+deploy-api.yml:
+
+name: Deploy API to Kubernetes
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-api:
+    name: Deploy API to Kubernetes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set up Kubectl
+        uses: dawidd6/action-setup-kubectl@v1
+        with:
+          kubectl_version: '1.22.0'
+      - name: Install HEL
